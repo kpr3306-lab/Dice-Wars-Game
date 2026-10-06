@@ -1,0 +1,6 @@
+# Only needed if you want to regenerate/add maps via generate_maps.py.
+# Not required to run or deploy the app itself -- the three maps are
+# pre-generated and checked in as JSON under game/data/.
+numpy==1.26.4
+scipy==1.13.1
+shapely==2.0.4
