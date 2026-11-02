@@ -6,8 +6,9 @@ hierarchical pipeline of three cooperating agents (Strategy → Attack →
 Defense), and a fourth agent (the Oracle) can advise you on your best move.
 Every AI decision is shown in a live "Behind the Scenes" reasoning feed.
 
-Applied Artificial Intelligence (AAI) course project — Semester V,
-team J033 / J043 / J046.
+Applied Artificial Intelligence (AAI) course project 
+
+![Dice Wars game board: red (you) vs blue (AI) territories with dice stacks, turn stats and the live reasoning panel](img1.png)
 
 ---
 
