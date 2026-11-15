@@ -42,7 +42,7 @@ turn flow, agent algorithms, and engine API.
   a short explanation.
 - **Animated battles** — every dice battle (yours and the AI's) pops up as a
   centered dice-roll overlay.
-- **Instructions** and **Behind the Scenes** pages in the sidebar.
+- **Instructions** and **Behind the Scenes** pages, linked from the top bar.
 
 ## Quick start
 
@@ -54,8 +54,8 @@ streamlit run streamlit_app.py
 ```
 
 Opens at `http://localhost:8501`. Pick a map on the home screen to start a
-match. The **Instructions** and **Behind the Scenes** pages appear
-automatically in the sidebar (anything in `pages/` becomes a nav entry).
+match. The **How to play** and **Behind the scenes** pages are linked
+from the top bar (`theme.brand_header`; sidebar nav is off in `.streamlit/config.toml`).
 
 Runtime dependencies are only `streamlit` and `plotly`
 ([requirements.txt](requirements.txt)).
@@ -88,7 +88,7 @@ Then the AI plays its whole turn, battle by battle, and the next round starts.
 The game ends when one side owns no territories.
 
 **Tip:** keeping your territories connected is what earns reinforcements.
-Open **Cheat: Recommended Move** in the side panel to see what the Oracle
+Open the **Oracle (cheat)** tab in the side panel to see what the Oracle
 would do.
 
 ## The AI

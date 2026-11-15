@@ -21,10 +21,27 @@ AGENT_LABEL = {
 }
 
 
+# Which of a die face's 3x3 grid cells carry a pip, per value.
+PIPS = {1: {4}, 2: {0, 8}, 3: {0, 4, 8}, 4: {0, 2, 6, 8}, 5: {0, 2, 4, 6, 8}, 6: {0, 2, 3, 5, 6, 8}}
+
+
 def _dice_html(rolls, side):
     return "".join(
-        f'<span class="die-face {side}">{v}</span>' for v in rolls
+        f'<span class="die-face {side}" role="img" aria-label="{v}">'
+        + "".join('<i class="pip"></i>' if c in PIPS[v] else "<i></i>" for c in range(9))
+        + "</span>"
+        for v in rolls
     )
+
+
+def _battle_html(result, a_rolls, d_rolls, a_total="", d_total=""):
+    return f"""
+        <h4>Territory {result['attacker_id']} &rarr; Territory {result['defender_id']}</h4>
+        <div class="dw-side attacker"><span class="who">Attacker</span>
+            <span class="dice">{_dice_html(a_rolls, 'attacker')}</span><span class="total">{a_total}</span></div>
+        <div class="dw-side defender"><span class="who">Defender</span>
+            <span class="dice">{_dice_html(d_rolls, 'defender')}</span><span class="total">{d_total}</span></div>
+    """
 
 
 def _overlay(inner_html):
@@ -46,29 +63,21 @@ def play_battle_animation(placeholder, result, frames=5, frame_delay=0.09, hold=
     for _ in range(frames):
         a_fake = [random.randint(1, 6) for _ in range(a_n)]
         d_fake = [random.randint(1, 6) for _ in range(d_n)]
-        placeholder.markdown(
-            _overlay(f"""
-                <h4>Territory {result['attacker_id']} &rarr; Territory {result['defender_id']}</h4>
-                <div><b>Attacker</b><br>{_dice_html(a_fake, 'attacker')}</div>
-                <div style="margin-top:8px;"><b>Defender</b><br>{_dice_html(d_fake, 'defender')}</div>
-            """),
-            unsafe_allow_html=True,
-        )
+        placeholder.markdown(_overlay(_battle_html(result, a_fake, d_fake)), unsafe_allow_html=True)
         time.sleep(frame_delay)
 
     outcome_class = "win" if result["success"] else "lose"
     outcome_text = (
-        f"Attacker wins {result['attacker_total']} &ndash; {result['defender_total']} &middot; Territory captured"
+        f"Territory {result['defender_id']} captured"
         if result["success"] else
-        f"Defender holds {result['defender_total']} &ndash; {result['attacker_total']} &middot; Attack repelled"
+        f"Attack repelled. Territory {result['attacker_id']} drops to 1 die"
     )
     placeholder.markdown(
-        _overlay(f"""
-            <h4>Territory {result['attacker_id']} &rarr; Territory {result['defender_id']}</h4>
-            <div><b>Attacker</b><br>{_dice_html(result['attacker_rolls'], 'attacker')}</div>
-            <div style="margin-top:8px;"><b>Defender</b><br>{_dice_html(result['defender_rolls'], 'defender')}</div>
-            <div class="dw-result {outcome_class}">{outcome_text}</div>
-        """),
+        _overlay(
+            _battle_html(result, result['attacker_rolls'], result['defender_rolls'],
+                         result['attacker_total'], result['defender_total'])
+            + f'<div class="dw-result {outcome_class}" role="status">{outcome_text}</div>'
+        ),
         unsafe_allow_html=True,
     )
     time.sleep(hold)
@@ -93,12 +102,11 @@ def show_reinforcement_overlay(placeholder, owner_label, placements=None, hold=0
         shown = []
         for tid, new_count in placements:
             shown.append(f"T{tid} &rarr; {new_count} dice")
-            rows = "".join(f'<div style="padding:2px 0;">{s}</div>' for s in shown[-6:])
+            rows = "<br>".join(shown[-6:])
             placeholder.markdown(
                 _overlay(f"""
                     <div class="dw-overlay-msg">&#127922; Placing reinforcements&hellip;</div>
-                    <div style="font-family:'JetBrains Mono', monospace; font-size:0.85rem;
-                                text-align:center; margin-top:8px;">{rows}</div>
+                    <div class="dw-overlay-rows">{rows}</div>
                 """),
                 unsafe_allow_html=True,
             )

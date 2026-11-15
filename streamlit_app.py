@@ -1,10 +1,10 @@
 import random
 import streamlit as st
 
-from game.engine import GameState, MAPS
+from game.engine import GameState, MAPS, MAX_DICE, list_map_variants, load_map_file
 from agents.ai_controller import AIController
 from agents.oracle_agent import OracleAgent
-from theme import inject_css, brand_header, OWNER_LABEL
+from theme import inject_css, brand_header
 from board_renderer import build_board_figure
 from animation import (
     play_battle_animation, show_reinforcement_overlay, clear_overlay,
@@ -62,6 +62,15 @@ def redraw_board(board_placeholder, state, redraw_key):
     )
 
 
+def render_feed(placeholder):
+    if st.session_state.feed:
+        placeholder.markdown("".join(render_thought_html(t) for t in st.session_state.feed[:20]),
+                             unsafe_allow_html=True)
+    else:
+        placeholder.markdown('<div class="dw-empty">No moves yet. The AI&rsquo;s three agents report '
+                             'their reasoning here as they play.</div>', unsafe_allow_html=True)
+
+
 def run_ai_turn(state, feed_placeholder, battle_placeholder, board_placeholder):
     """Runs the AI's whole turn, but -- unlike a black box -- each attack and
     the reinforcement pass are surfaced exactly the way the human's own moves
@@ -73,12 +82,7 @@ def run_ai_turn(state, feed_placeholder, battle_placeholder, board_placeholder):
     for step in steps:
         if step["type"] == "thought":
             append_feed(step["thought"])
-            feed_placeholder.markdown(
-                '<div class="dw-feed-scroll">'
-                + "".join(render_thought_html(t) for t in st.session_state.feed[:12])
-                + "</div>",
-                unsafe_allow_html=True,
-            )
+            render_feed(feed_placeholder)
             if step["thought"]["agent"] == "defense":
                 placements = step.get("placements_detail") or []
                 if placements:
@@ -157,20 +161,48 @@ def handle_board_click(state, sd, human_t, clicked_tid):
     return None
 
 
+
+
 def render_cheat_panel(state):
     thought = ORACLE.think(state, owner="human")
     shortlist = thought.data.get("shortlist", [])
-    with st.expander("\U0001F575\uFE0F Cheat: Recommended Move", expanded=False):
-        st.markdown(render_thought_html(vars(thought)), unsafe_allow_html=True)
-        if shortlist:
-            rows = "".join(
-                f'<div class="dw-cheat-row">'
-                f'<span><span class="dw-cheat-rank">#{i+1}</span>T{c["src"]} \u2192 T{c["dst"]}</span>'
-                f'<span>{int(c["win_prob"]*100)}% win \u00b7 exposure {c["exposure"]}</span>'
-                f'</div>'
-                for i, c in enumerate(shortlist)
-            )
-            st.markdown(f'<div class="dw-card">{rows}</div>', unsafe_allow_html=True)
+    st.markdown(render_thought_html(vars(thought)), unsafe_allow_html=True)
+    if shortlist:
+        rows = "".join(
+            f'<div class="dw-cheat-row">'
+            f'<span><span class="dw-cheat-rank">#{i+1}</span>T{c["src"]} → T{c["dst"]}</span>'
+            f'<span class="mono">{int(c["win_prob"]*100)}% win · exposure {c["exposure"]}</span>'
+            f'</div>'
+            for i, c in enumerate(shortlist)
+        )
+        st.markdown(rows, unsafe_allow_html=True)
+
+
+def front(caption, h, a, unit):
+    return f"""
+        <div class="dw-front">
+            <div class="head"><span class="h">You <b>{h}</b></span><span>{caption}</span><span class="a"><b>{a}</b> AI</span></div>
+            <div class="bar" role="img" aria-label="You {h} {unit}, AI {a} {unit}">
+                <span class="h" style="flex-grow:{h};"></span><span class="a" style="flex-grow:{a};"></span>
+            </div>
+        </div>"""
+
+
+def finish_human_reinforcement(state, feed_placeholder, battle_placeholder, board_placeholder):
+    # Dice that don't fit under the 8-per-territory cap are forfeited, so the
+    # turn can never get stuck with an unplaceable pool.
+    state.pending_reinforcements = 0
+    state.switch_turn()
+    run_ai_turn(state, feed_placeholder, battle_placeholder, board_placeholder)
+    st.session_state.selected_src = None
+    st.session_state.click_message = None
+    st.session_state.chart_seq += 1
+    st.rerun()
+
+
+@st.cache_data
+def territory_count(map_id):
+    return len(load_map_file(list_map_variants(map_id)[0])["territories"])
 
 
 # =================================================================
@@ -178,33 +210,43 @@ def render_cheat_panel(state):
 # =================================================================
 if st.session_state.game is None:
     brand_header()
-    st.markdown("## Choose Your Theater")
     st.markdown(
-        "*Three campaign maps. One AI general, built from three cooperating agents, standing against you. "
-        "Every match generates a freshly randomized layout, coastline, and set of gaps.*"
+        """
+        <div class="dw-hero">
+            <span class="dw-chip">TURN-BASED STRATEGY</span><span class="dw-chip">MULTI-AGENT AI</span>
+            <h1>Choose your theater</h1>
+            <p>You command the red. Across the water, an AI general built from three cooperating
+            agents commands the blue. Every match deals a fresh coastline and territory layout.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
-    st.write("")
-    cols = st.columns(3)
-    descriptions = {
-        "skirmish_isle": "Small and fast — good for learning the flow.",
-        "twin_peninsulas": "Mid-sized, with natural choke points.",
-        "grand_continent": "A sprawling campaign for longer games.",
+    blurbs = {
+        "skirmish_isle": ("Small and fast. The best place to learn the flow.", "Quick"),
+        "twin_peninsulas": ("Mid-sized, with natural choke points to hold.", "Standard"),
+        "grand_continent": ("A sprawling campaign for longer games.", "Long"),
     }
-    for col, (map_id, label) in zip(cols, MAPS.items()):
-        with col:
+    _, *cols, _ = st.columns([0.15, 1, 1, 1, 0.15], gap="medium")
+    for i, (col, (map_id, label)) in enumerate(zip(cols, MAPS.items())):
+        name = label.split("(")[0].strip()
+        blurb, pace = blurbs.get(map_id, ("", ""))
+        scale = "".join(f'<i class="{"on" if b <= i else ""}" style="height:{10 + b * 8}px"></i>' for b in range(3))
+        with col, st.container(key=f"dw_map_{map_id}"):
             st.markdown(
                 f"""
-                <div class="dw-map-card">
-                    <h3>{label.split('(')[0].strip()}</h3>
-                    <p style="font-size:0.85rem; color:#5a4a30;">
-                        {'(' + label.split('(')[1] if '(' in label else ''}
-                    </p>
-                    <p>{descriptions.get(map_id, '')}</p>
+                <div class="dw-map">
+                    <div class="scale" aria-hidden="true">{scale}</div>
+                    <h3>{name}</h3>
+                    <p>{blurb}</p>
+                    <div class="stats">
+                        <div class="stat"><div class="v">{territory_count(map_id)}</div><div class="k">Territories</div></div>
+                        <div class="stat"><div class="v">{pace}</div><div class="k">Pace</div></div>
+                    </div>
                 </div>
                 """,
                 unsafe_allow_html=True,
             )
-            if st.button(f"Play {label.split('(')[0].strip()}", key=f"play_{map_id}", width='stretch'):
+            if st.button(f"Play {name}", key=f"play_{map_id}", type="primary", width="stretch"):
                 new_game(map_id)
                 st.rerun()
 
@@ -215,190 +257,185 @@ else:
     state = st.session_state.game
     sd = state.to_dict()
 
-    header_col, home_col = st.columns([5, 1])
-    with header_col:
-        brand_header()
-    with home_col:
-        if st.button("\U0001F3E0 Home", key="home_btn", width='stretch'):
+    with brand_header(), st.container(horizontal=True, horizontal_alignment="right"):
+        if st.button("Leave match", key="home_btn", help="Abandon this match and return to map select."):
             go_home()
             st.rerun()
 
     if state.winner:
-        winner_label = "Victory is Yours" if state.winner == "human" else "The AI General Prevails"
-        color = "#b25050" if state.winner == "human" else "#5c8ca3"
+        won = state.winner == "human"
         st.markdown(
-            f"<h1 style='text-align:center; color:{color};'>{winner_label}</h1>",
+            f"""
+            <div class="dw-card dw-endcard" style="--dw-end:{'#c35a55' if won else '#5b93ad'};">
+                <span class="eyebrow">Campaign over</span>
+                <h1>{'The map is yours' if won else 'The AI general holds the map'}</h1>
+                <p>Decided on turn {sd['turn_number']}, after {len(state.log)} battles.</p>
+            </div>
+            """,
             unsafe_allow_html=True,
         )
-        if st.button("Play Again", width='stretch'):
+        _, mid, _ = st.columns([1, 0.6, 1])
+        if mid.button("Play again", type="primary", width="stretch"):
             go_home()
             st.rerun()
         st.stop()
 
     human_t = [t for t in sd["territories"].values() if t["owner"] == "human"]
     ai_t = [t for t in sd["territories"].values() if t["owner"] == "ai"]
-    is_human_attack_phase = sd["turn_owner"] == "human" and state.pending_reinforcements == 0
+    is_human_turn = sd["turn_owner"] == "human"
+    reinforcing = is_human_turn and state.pending_reinforcements > 0
+    is_human_attack_phase = is_human_turn and not reinforcing
     attackable = [
         t["id"] for t in human_t
         if t["dice"] > 1 and any(sd["territories"][str(n)]["owner"] != "human" for n in t["neighbors"])
     ]
+    own_ids = [t["id"] for t in human_t if t["dice"] < MAX_DICE]
 
-    board_col, side_col = st.columns([2.1, 1])
+    valid_targets = set()
+    if is_human_attack_phase and st.session_state.selected_src is not None:
+        src_t = sd["territories"].get(str(st.session_state.selected_src))
+        if src_t:
+            valid_targets = {n for n in src_t["neighbors"] if sd["territories"][str(n)]["owner"] != "human"}
 
-    with side_col:
-        badge_class = "human" if sd["turn_owner"] == "human" else "ai"
-        badge_text = "Your Turn" if sd["turn_owner"] == "human" else "AI Turn"
-        st.markdown(
-            f"""
-            <div class="dw-card">
-                <span class="dw-badge {badge_class}">{badge_text}</span>
-                <table style="width:100%; font-size:0.85rem; margin-top:8px;">
-                    <tr><td>Turn</td><td style="text-align:right;"><b>{sd['turn_number']}</b></td></tr>
-                    <tr><td>Your territories</td><td style="text-align:right;"><b>{len(human_t)}</b></td></tr>
-                    <tr><td>AI territories</td><td style="text-align:right;"><b>{len(ai_t)}</b></td></tr>
-                    <tr><td>Your dice</td><td style="text-align:right;"><b>{sum(t['dice'] for t in human_t)}</b></td></tr>
-                    <tr><td>AI dice</td><td style="text-align:right;"><b>{sum(t['dice'] for t in ai_t)}</b></td></tr>
-                </table>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+    board_col, side_col = st.columns([2.25, 1], gap="medium")
 
-        end_attack_disabled = not is_human_attack_phase
-        if st.button(
-            "End Attack Phase", key="end_attack_btn", width='stretch',
-            disabled=end_attack_disabled,
-            help="Available during your attack phase; grayed out during reinforcement "
-                 "placement and the AI's turn.",
-        ):
-            state.end_turn_and_reinforce("human")
-            st.session_state.selected_src = None
-            st.session_state.chart_seq += 1
-            st.rerun()
-
-        with st.expander("Behind the Scenes — Live", expanded=True):
-            feed_placeholder = st.empty()
-            if st.session_state.feed:
-                feed_placeholder.markdown(
-                    '<div class="dw-feed-scroll">'
-                    + "".join(render_thought_html(t) for t in st.session_state.feed[:12])
-                    + "</div>",
-                    unsafe_allow_html=True,
-                )
-            else:
-                feed_placeholder.markdown(
-                    '<div class="dw-thought strategy"><div class="tag">System</div>'
-                    '<div class="headline">Awaiting first move\u2026</div></div>',
-                    unsafe_allow_html=True,
-                )
-
-        if is_human_attack_phase:
-            render_cheat_panel(state)
-
-        with st.expander("\U0001F4DC Attack Log", expanded=False):
-            if state.log:
-                st.markdown(
-                    "<div class='dw-card' style='font-family:JetBrains Mono, monospace; "
-                    "font-size:0.78rem;'>" +
-                    "<br>".join(reversed(state.log[-40:])) +
-                    "</div>",
-                    unsafe_allow_html=True,
-                )
-            else:
-                st.caption("No attacks yet this match.")
-
+    # ---------------------------------------------------------------- board
     with board_col:
-        valid_targets = set()
-        if is_human_attack_phase and st.session_state.selected_src is not None:
-            src_t = sd["territories"].get(str(st.session_state.selected_src))
-            if src_t:
-                valid_targets = {n for n in src_t["neighbors"] if sd["territories"][str(n)]["owner"] != "human"}
-
-        fig = build_board_figure(sd, selected_id=st.session_state.selected_src, valid_targets=valid_targets)
-
-        board_placeholder = st.empty()
-        chart_key = f"board_chart_{st.session_state.chart_seq}"
-        event = board_placeholder.plotly_chart(
-            fig, width='stretch', config={"displayModeBar": False},
-            on_select="rerun" if is_human_attack_phase else "ignore",
-            selection_mode="points",
-            key=chart_key,
-        )
-
-        # Overlay placeholder: battle popups and "placing reinforcements" both
-        # render here as a centered, fixed-position modal (see theme.py /
-        # animation.py) -- same treatment regardless of whose move it is.
+        with st.container(key="dw_board"):
+            board_placeholder = st.empty()
+            event = board_placeholder.plotly_chart(
+                build_board_figure(sd, selected_id=st.session_state.selected_src, valid_targets=valid_targets),
+                width="stretch", config={"displayModeBar": False},
+                on_select="rerun" if (is_human_attack_phase and attackable) or reinforcing else "ignore",
+                selection_mode="points",
+                key=f"board_chart_{st.session_state.chart_seq}",
+            )
+            st.markdown(
+                '<div class="dw-legend">'
+                '<span><i style="background:#9e3f3c"></i>Your territory</span>'
+                '<span><i style="background:#3b6f88"></i>AI territory</span>'
+                '<span><i style="background:#fff6e0"></i>Selected attacker</span>'
+                '<span><i style="background:#e3bf6a"></i>Attackable target</span>'
+                '</div>',
+                unsafe_allow_html=True,
+            )
+        # Battle / reinforcement popups render here as a fixed, centered modal.
         battle_placeholder = st.empty()
 
-        if sd["turn_owner"] == "human":
-            if state.pending_reinforcements > 0:
-                st.markdown(f"**Reinforcements remaining: {state.pending_reinforcements}**")
-                own_ids = [t["id"] for t in human_t if t["dice"] < 8]
-                if own_ids:
-                    target = st.selectbox(
-                        "Place a reinforcement on:", own_ids,
-                        format_func=lambda i: f"Territory {i} ({sd['territories'][str(i)]['dice']} dice)",
-                        key="reinforce_target",
-                    )
-                    rc1, rc2 = st.columns(2)
-                    if rc1.button("Place Die", width='stretch'):
-                        state.place_reinforcement("human", target)
-                        st.rerun()
-                    if rc2.button("Auto-place rest", width='stretch'):
-                        before = {t["id"]: t["dice"] for t in human_t}
-                        placed = state.auto_place_reinforcements("human")
-                        if placed:
-                            running = dict(before)
-                            detail = []
-                            for tid in placed:
-                                running[tid] = running.get(tid, 0) + 1
-                                detail.append((tid, running[tid]))
-                            show_reinforcement_overlay(battle_placeholder, "You", detail)
-                        state.switch_turn()
-                        run_ai_turn(state, feed_placeholder, battle_placeholder, board_placeholder)
-                        st.session_state.selected_src = None
-                        st.rerun()
+    # ---------------------------------------------------------------- side panel
+    end_clicked = place_clicked = auto_clicked = False
+    with side_col:
+        with st.container(key="dw_command"):
+            badge = '<span class="dw-badge human">Your turn</span>' if is_human_turn \
+                else '<span class="dw-badge ai">AI general is moving</span>'
+            human_dice, ai_dice = sum(t["dice"] for t in human_t), sum(t["dice"] for t in ai_t)
+            if is_human_attack_phase:
+                phase = "Attack phase"
+                if not attackable:
+                    hint = "None of your territories can attack. End the phase to collect reinforcements."
+                elif st.session_state.selected_src is not None:
+                    hint = (f"<b>T{st.session_state.selected_src}</b> selected. Click a highlighted enemy "
+                            f"territory to attack, or click it again to deselect.")
                 else:
-                    state.auto_place_reinforcements("human")
-                    st.rerun()
-
-                if state.pending_reinforcements == 0:
-                    state.switch_turn()
-                    run_ai_turn(state, feed_placeholder, battle_placeholder, board_placeholder)
-                    st.session_state.selected_src = None
-                    st.rerun()
+                    hint = "Click one of your territories with <b>2+ dice</b> to see what it can attack."
+            elif reinforcing:
+                phase = f"Reinforce · {state.pending_reinforcements} dice left"
+                hint = ("Click your territories on the map to add a die each, or let the game place "
+                        "the rest on your weakest border.")
             else:
-                if attackable:
-                    clicked_tid = get_clicked_tid(event)
-                    if clicked_tid is not None:
-                        battle_result = handle_board_click(state, sd, human_t, clicked_tid)
-                        if battle_result is not None:
-                            play_battle_animation(battle_placeholder, battle_result)
-                        st.session_state.chart_seq += 1  # reset chart selection state
-                        st.rerun()
+                phase, hint = "Enemy turn", "Watch the live feed for the AI's reasoning."
+            msg = st.session_state.click_message
+            st.markdown(
+                f"""
+                <div class="dw-turn-row">{badge}<span class="num">TURN {sd['turn_number']}</span></div>
+                {front("Territories", len(human_t), len(ai_t), "territories")}
+                {front("Dice", human_dice, ai_dice, "dice")}
+                <div class="dw-divider"></div>
+                <div class="dw-phase">{phase}</div>
+                <div class="dw-hint">{hint}</div>
+                {f'<div class="dw-click-msg" role="status">{msg}</div>' if msg else ''}
+                """,
+                unsafe_allow_html=True,
+            )
+            if is_human_attack_phase:
+                end_clicked = st.button("End attack phase", key="end_attack_btn", type="primary", width="stretch")
+            elif reinforcing and own_ids:
+                pick_col, place_col = st.columns([2.2, 1], vertical_alignment="bottom", gap="small")
+                target = pick_col.selectbox(
+                    "Place a reinforcement on", own_ids, label_visibility="collapsed",
+                    format_func=lambda i: f"T{i} · {sd['territories'][str(i)]['dice']} dice",
+                    key="reinforce_target",
+                )
+                place_clicked = place_col.button("Place", key="place_btn", width="stretch")
+                auto_clicked = st.button("Auto-place the rest", key="auto_btn", type="primary", width="stretch")
 
-                    if st.session_state.selected_src is not None:
-                        st.markdown(
-                            f'<div class="dw-hint">Territory <b>T{st.session_state.selected_src}</b> '
-                            f'selected \u2014 click a highlighted enemy territory to attack, '
-                            f'or click it again to deselect.</div>',
-                            unsafe_allow_html=True,
-                        )
-                    else:
-                        st.markdown(
-                            '<div class="dw-hint">Click one of your territories (2+ dice) to see '
-                            'which enemy territories it can attack.</div>',
-                            unsafe_allow_html=True,
-                        )
-                    if st.session_state.click_message:
-                        st.markdown(
-                            f'<div class="dw-click-msg">{st.session_state.click_message}</div>',
-                            unsafe_allow_html=True,
-                        )
-                else:
-                    st.info("No legal attacks available \u2014 use End Attack Phase in the side panel.")
-        else:
-            # Shouldn't normally be reached (AI turn runs synchronously above),
-            # but acts as a safety net if state was left mid-AI-turn.
-            run_ai_turn(state, feed_placeholder, battle_placeholder, board_placeholder)
+        feed_tab, oracle_tab, log_tab = st.tabs(["Live feed", "Oracle (cheat)", "Battle log"])
+        with feed_tab, st.container(height=250, border=False):
+            feed_placeholder = st.empty()
+            render_feed(feed_placeholder)
+        with oracle_tab, st.container(height=250, border=False):
+            if is_human_attack_phase and attackable:
+                render_cheat_panel(state)
+            else:
+                st.markdown('<div class="dw-empty">The Oracle suggests your best-odds attack during your '
+                            'attack phase.</div>', unsafe_allow_html=True)
+        with log_tab, st.container(height=250, border=False):
+            if state.log:
+                st.markdown('<div class="dw-log">' + "<br>".join(reversed(state.log[-40:])) + "</div>",
+                            unsafe_allow_html=True)
+            else:
+                st.markdown('<div class="dw-empty">No battles yet this match.</div>', unsafe_allow_html=True)
+
+    # ---------------------------------------------------------------- turn flow
+    if is_human_attack_phase:
+        if end_clicked:
+            state.end_turn_and_reinforce("human")
+            st.session_state.selected_src = None
+            st.session_state.click_message = None
+            st.session_state.chart_seq += 1
             st.rerun()
+        clicked_tid = get_clicked_tid(event) if attackable else None
+        if clicked_tid is not None:
+            battle_result = handle_board_click(state, sd, human_t, clicked_tid)
+            if battle_result is not None:
+                play_battle_animation(battle_placeholder, battle_result)
+            st.session_state.chart_seq += 1  # reset chart selection state
+            st.rerun()
+
+    elif reinforcing:
+        if not own_ids or auto_clicked:
+            before = {t["id"]: t["dice"] for t in human_t}
+            detail = []
+            for tid in state.auto_place_reinforcements("human"):
+                before[tid] += 1
+                detail.append((tid, before[tid]))
+            if detail:
+                show_reinforcement_overlay(battle_placeholder, "You", detail)
+            finish_human_reinforcement(state, feed_placeholder, battle_placeholder, board_placeholder)
+
+        clicked_tid = get_clicked_tid(event)
+        placed = False
+        if clicked_tid is not None:
+            st.session_state.click_message = None
+            placed = state.place_reinforcement("human", clicked_tid)
+            if not placed:
+                t = sd["territories"].get(str(clicked_tid))
+                st.session_state.click_message = (
+                    "Reinforce your own territories only." if t and t["owner"] != "human"
+                    else f"That territory is already at the {MAX_DICE}-dice cap."
+                )
+            st.session_state.chart_seq += 1
+        elif place_clicked:
+            st.session_state.click_message = None
+            placed = state.place_reinforcement("human", target)
+
+        if placed and state.pending_reinforcements == 0:
+            finish_human_reinforcement(state, feed_placeholder, battle_placeholder, board_placeholder)
+        if clicked_tid is not None or placed:
+            st.rerun()
+
+    else:
+        # Safety net: the AI turn normally runs synchronously above, but if
+        # state was left mid-AI-turn, finish it now.
+        run_ai_turn(state, feed_placeholder, battle_placeholder, board_placeholder)
+        st.rerun()

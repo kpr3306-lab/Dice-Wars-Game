@@ -139,7 +139,7 @@ score    = win_prob × (1 + 0.15 × frontier) − 0.05 × exposure
 
 where `src_threat` / `dst_threat` are the enemy dice adjacent to the source
 (left with 1 die) and the captured target (holding `moved_dice`). The top 3
-are shown in the **Cheat: Recommended Move** panel.
+are shown in the **Oracle (cheat)** tab of the side panel.
 
 ### Why a pipeline
 

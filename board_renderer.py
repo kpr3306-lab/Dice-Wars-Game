@@ -25,7 +25,7 @@ import plotly.graph_objects as go
 from theme import OWNER_COLOR, OWNER_COLOR_LT, BRASS_LT, INK
 
 WATER_COLOR = "#17222c"
-PLOT_BG = "#0e141d"
+PLOT_BG = "#0c1118"
 
 # Unicode "die face" glyphs, U+2680-U+2685 (one through six pips). Only used
 # for visual flavor -- which face shows has no gameplay meaning, it's purely
@@ -120,7 +120,7 @@ def build_board_figure(state_dict, selected_id=None, valid_targets=None):
 
         fig.add_annotation(
             x=cx, y=cy - (base_size / 2) - 9, text=f"T{tid}", showarrow=False,
-            font=dict(color="#8a93a8", size=9), opacity=0.85,
+            font=dict(color="#8a93a8", size=9, family="JetBrains Mono, monospace"), opacity=0.85,
         )
 
     text_color = [
@@ -146,8 +146,9 @@ def build_board_figure(state_dict, selected_id=None, valid_targets=None):
     fig.update_yaxes(visible=False, fixedrange=True, scaleanchor="x", scaleratio=1)
     fig.update_layout(
         margin=dict(l=10, r=10, t=10, b=10),
-        height=560,
+        height=540,
         dragmode=False,
         clickmode="event+select",
+        hoverlabel=dict(bgcolor="#f2ebda", bordercolor=BRASS_LT, font=dict(color=INK, family="Inter, sans-serif", size=13)),
     )
     return fig

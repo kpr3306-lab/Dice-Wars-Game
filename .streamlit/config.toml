@@ -1,0 +1,17 @@
+# Native widgets (selectbox, tabs, tooltips) pick up the war-room palette.
+[theme]
+base = "dark"
+primaryColor = "#e3bf6a"
+backgroundColor = "#10151e"
+secondaryBackgroundColor = "#171e2b"
+textColor = "#ede6d4"
+font = "sans-serif"
+borderColor = "#262f40"
+
+[client]
+toolbarMode = "minimal"
+# Navigation lives in the top bar (theme.brand_header), not the sidebar.
+showSidebarNavigation = false
+
+[browser]
+gatherUsageStats = false
